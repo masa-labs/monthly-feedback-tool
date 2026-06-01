@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>月報フィードバック作成ツール</title>
+<style>
+  :root { --blue:#2563eb; --bg:#f3f4f6; --line:#e5e7eb; --ok:#16a34a; --warn:#d97706; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'Hiragino Kaku Gothic ProN','Noto Sans JP','Yu Gothic',sans-serif; background:var(--bg); color:#1f2937; line-height:1.7; }
+  .wrap { max-width:980px; margin:0 auto; padding:24px 16px 80px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:#6b7280; font-size:13px; margin-bottom:16px; }
+  .card { background:#fff; border-radius:12px; padding:18px 18px; margin-bottom:16px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .step { font-weight:700; color:var(--blue); font-size:13px; margin-bottom:8px; }
+  label { font-size:13px; font-weight:600; display:block; margin-bottom:4px; }
+  input[type=password], input[type=month], input[type=file] { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; font-size:14px; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:200px; }
+  .hint { font-size:12px; color:#6b7280; margin-top:4px; }
+  .privacy { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; font-size:12.5px; border-radius:8px; padding:10px 12px; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:8px; padding:11px 18px; font-size:15px; font-weight:700; cursor:pointer; }
+  button.sec { background:#fff; color:var(--blue); border:1px solid var(--blue); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .drop { border:2px dashed #cbd5e1; border-radius:10px; padding:22px; text-align:center; color:#6b7280; background:#fafafa; cursor:pointer; }
+  .drop.over { border-color:var(--blue); background:#eff6ff; color:var(--blue); }
+  .bar { height:8px; background:#e5e7eb; border-radius:6px; overflow:hidden; margin-top:8px; }
+  .bar > i { display:block; height:100%; background:var(--blue); width:0%; transition:width .2s; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { border:1px solid var(--line); padding:6px 8px; vertical-align:top; text-align:left; }
+  th { background:#f8fafc; position:sticky; top:0; }
+  td.body, td.fb { white-space:pre-wrap; max-width:320px; max-height:160px; overflow:auto; }
+  .tablewrap { max-height:520px; overflow:auto; border-radius:8px; }
+  .badge { display:inline-block; font-size:11px; padding:1px 6px; border-radius:999px; background:#fef3c7; color:#92400e; margin-left:4px; }
+  .msg { font-size:13px; padding:8px 10px; border-radius:8px; margin-top:8px; }
+  .msg.err { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+  .msg.ok { background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0; }
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  .count { font-size:13px; color:#374151; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>月報フィードバック作成ツール</h1>
+  <div class="sub">LINEのトーク履歴から月報を抽出し、講師フィードバックを自動生成します。</div>
+
+  <div class="card">
+    <div class="privacy">
+      🔒 <b>プライバシー：</b>トーク履歴ファイルは<b>このブラウザの中だけ</b>で解析され、私たちのサーバーには一切送信されません。
+      OpenAIへ送られるのは<b>抽出した月報本文のみ</b>です。APIキーもこのブラウザ内（端末）にだけ保存されます。
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="step">STEP 1 ── OpenAI APIキー</div>
+    <label for="apikey">APIキー（sk-… ／ ブラウザ内にのみ保存）</label>
+    <input type="password" id="apikey" placeholder="sk-..." autocomplete="off" />
+    <div class="hint">キーは <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a> で取得できます。この端末のブラウザにだけ保存され、外部には送りません。</div>
+  </div>
+
+  <div class="card">
+    <div class="step">STEP 2 ── トーク履歴ファイル</div>
+    <div class="drop" id="drop">ここに <b>LINEの.txt</b> をドラッグ＆ドロップ、またはクリックして選択</div>
+    <input type="file" id="file" accept=".txt" style="display:none" />
+    <div class="hint" id="fileinfo">未選択</div>
+  </div>
+
+  <div class="card">
+    <div class="step">STEP 3 ── 対象月</div>
+    <div class="row">
+      <div>
+        <label for="month">対象月（この月に投稿された月報が対象）</label>
+        <input type="month" id="month" />
+      </div>
+    </div>
+    <div class="hint">月をまたいで投稿される場合に備え、必要なら範囲を後から広げられます（現状は選んだ月の1日〜末日）。</div>
+  </div>
+
+  <div class="card">
+    <div class="step">STEP 4（任意）── スプレッドシート連携</div>
+    <div class="row">
+      <div>
+        <label for="sheeturl">GASウェブアプリURL（…/exec）</label>
+        <input type="password" id="sheeturl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" />
+      </div>
+      <div>
+        <label for="sheettoken">合言葉トークン（任意・GASでTOKEN設定時のみ）</label>
+        <input type="password" id="sheettoken" placeholder="（未設定なら空欄でOK）" autocomplete="off" />
+      </div>
+    </div>
+    <div class="hint">設定すると、結果を「スプレッドシートに追記」できます（新規の月報だけ追記・手編集は保持）。送られるのは<b>月報本文＋フィードバックの結果行だけ</b>で、<b>生チャットは送りません</b>。送信先はあなた自身のスプレッドシート（GAS）です。空欄なら連携は使いません。</div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <button id="run">フィードバックを作成</button>
+      <button class="sec" id="clearcache" title="生成済みのキャッシュを消します">キャッシュ消去</button>
+      <span class="count" id="status"></span>
+    </div>
+    <div class="bar"><i id="barfill"></i></div>
+    <div id="message"></div>
+  </div>
+
+  <div class="card" id="resultcard" style="display:none">
+    <div class="toolbar">
+      <span class="count" id="resultcount"></span>
+      <button class="sec" id="copy">スプレッドシート用にコピー</button>
+      <button class="sec" id="download">TSVダウンロード</button>
+      <button class="sec" id="pushsheet">スプレッドシートに追記</button>
+    </div>
+    <div class="tablewrap">
+      <table id="table"><thead></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================================
+ *  設定（Node版 config.js / prompt.js を移植）
+ * ====================================================================== */
+const PROMPT_VERSION = "v3-2026-06";
+
+const REPORT_TEMPLATE_MARKERS = ["【Amazon","販売数","合計売上","良かったこと","伸びしろ","来月の行動目標","長期目標"];
+const NON_REPORT_FIRSTLINE_MARKERS = ["ONEアクション","ＯＮＥアクション","利益商品共有","利益商品シェア","【共有】","【中古】","アウトプット","勉強会録画","本日の勉強会録画","音声コラム","音声共有","本日の音声"];
+const BOT_SENDER_NAMES = ["Auto-reply","LINE"];
+const BOT_BODY_MARKERS = ["自動応答メッセージです","数字を教えてください","各項目の数字を教えて","質問が1つずつ届きます","月一ライブ配信中","オンライン勉強会","セミナー","ライブトーク","音声プログラム","リマインド","インタビュー"];
+const SYSTEM_MESSAGE_PATTERNS = [/が参加しました。?$/,/が退出しました。?$/,/がメッセージの送信を取り消しました/,/がグループに参加しました/,/がノートを投稿しました/];
+const LINE_DATE_HEADER = /^(\d{4})\.(\d{1,2})\.(\d{1,2})\s+\S*?曜日\s*$/;
+const LINE_MESSAGE_START = /^(\d{1,2}):(\d{2})\s+(.+)$/;
+const STUDENT_NAME_PATTERN = /([^\n（(]{2,30}?)\s*[（(][^）)\n]{1,20}[）)]\s*[（(][^）)\n]*部門[）)]/;
+const NON_STUDENT_SENDER_NAMES = ["Unknown","Auto-reply","LINE"];
+const INSTRUCTOR_NAMES = ["森谷和正","久冨木伸","永田知也","山戸田真紀","櫻岡淳","宇田川真彦","梅津雅俊","大串悠","坪井慧也","鈴木侑斗","増田祐介","吉川瑞貴","足立秀峰","真名志昇","田中規久","吉田和美"];
+const UNKNOWN_STUDENT_LABEL = "（生徒名不明・要確認）";
+const REVIEW_STATUS = { unchecked:"未確認", needsReview:"要確認", duplicateSuffix:"（重複候補）" };
+const POST_NOT_POSTED = "未投稿";
+const OUTPUT_COLUMNS = ["投稿日時","生徒名","月報本文","フィードバック文","確認ステータス","投稿済み"];
+const ALLOWED_EMOJI = ["🔥","✨","👍","😊","👏"];
+const FEEDBACK_PHRASE_REPLACEMENTS = [
+  {from:"評価できますね",to:"素晴らしいですね"},
+  {from:"評価できます",to:"素晴らしいです"},
+  {from:"評価できる",to:"光る"},
+  {from:"お疲れ様でした",to:""},
+  {from:"お疲れ様です",to:""},
+];
+const OPENAI = { model:"gpt-4o-mini", endpoint:"https://api.openai.com/v1/chat/completions", temperature:0.7, maxTokens:600, maxRetries:4, retryBaseMs:1500, concurrency:4 };
+
+const FEEDBACK_SYSTEM_PROMPT = `あなたは物販スクールの講師です。
+生徒が提出した月報に対して、講師としての威厳・信頼感・温かさを持ったフィードバック文を作成してください。
+
+# 出力ルール
+- 冒頭は生徒の「名字＋さん」で呼びかけてから始める。フルネームにはしない（例：「柳原秀一」→「柳原さん」、「武田延子」→「武田さん」、「宇田川真彦」→「宇田川さん」）。生徒名が与えられない場合は呼びかけを省略する。
+- 「あなた」「あなたの」という表現は使わない。「○○さん」や行動・成果そのものを主語にする。
+- 全体で5〜10行程度。読みやすいよう2〜3文ごとに改行し、要点の区切りに空行を入れる。
+- 金額は1円単位で書かず、おおよそ万円単位に丸めて書く（例：1,284,823円→約128万円、273,631円→約27万円、3,650,491円→約365万円）。数字はざっくりでよい。販売数なども細かすぎなくてよい。
+- 講師側から評価する立場で、威厳と信頼感のある口調にする。ただし、冷たくならず、前向きで温かい印象にする。
+- 語尾はなるべく「！」を使い、力強く前向きにする。
+- 絵文字は 🔥 ✨ 👍 😊 👏 の5種類だけを使う。これ以外の絵文字（😍 🥰 💪 🎉 💯 🙇 等）は絶対に使わない。使いすぎず、自然に入れる。
+- 生徒の月報内容に具体的に触れる。数字が出ている場合は、売上・利益・販売数などを踏まえて評価する。
+- 数字が0円の場合でも、行動・準備・学習姿勢・提出できたことを前向きに評価する。
+- 最後は次月の行動・目標を促す前向きな言葉で締める。
+- フィードバック文のみを出力し、解説や見出しは不要。
+
+# 禁止表現（絶対に使わない）
+確認しました / ありがとうございます / 〜していただきありがとうございます / 頑張ってください / 頑張りましょう / 無理せず頑張りましょう / 参考になれば幸いです / 〜だと思います / 〜かもしれません / もしよければ / できれば / お疲れ様です / お疲れ様でした / 評価できます / あなた / あなたの
+
+# 推奨表現（積極的に使う）
+さすがです！ / 素晴らしいです！ / 非常に良いです！ / 良いスタートです！ / おめでとうございます！ / この姿勢は大事です！ / ここはしっかり見ています！ / 次は〇〇まで進めましょう！ / この流れを継続しましょう！ / この勢いのまま進めていきましょう！ / まずは〇〇を取りにいきましょう！ / 〇月は〇〇を一気に進めましょう！ / この初速を大切にしてください！ / 数字に繋げる段階に入っていきましょう！`;
+
+function buildUserMessage(reportBody, studentName){
+  const usable = studentName && studentName.length>0 && studentName.indexOf("不明")===-1;
+  const namePart = usable
+    ? `生徒名: ${studentName}\n（この生徒の「名字＋さん」で冒頭に呼びかけてください。フルネームにはしないでください）\n\n`
+    : "";
+  return `${namePart}以下の月報に対する、講師としてのフィードバック文を作成してください。\n\n---\n${reportBody}\n---`;
+}
+
+/* =========================================================================
+ *  パーサ（parser.js を移植）
+ * ====================================================================== */
+const SENDER_WITH_READING = /^(\S+(?:[ 　]\S+){0,2}?[（(][^（）()]*[）)][^\s]*)\s+([\s\S]*)$/;
+const SENDER_SIMPLE = /^(\S+)\s+([\s\S]*)$/;
+
+function pad2(v){ return String(v).padStart(2,"0"); }
+
+function splitSenderAndBody(rest){
+  const m0 = rest.match(/^(\S+)/);
+  const firstToken = m0 ? m0[1] : "";
+  const isAnon = NON_STUDENT_SENDER_NAMES.some(n => firstToken.startsWith(n));
+  if(!isAnon){
+    const reading = rest.match(SENDER_WITH_READING);
+    if(reading) return { sender: reading[1].trim(), firstLine: reading[2] };
+  }
+  const simple = rest.match(SENDER_SIMPLE);
+  if(simple) return { sender: simple[1], firstLine: simple[2] };
+  return { sender: rest, firstLine: "" };
+}
+
+function parseLineChat(rawText){
+  const lines = rawText.split(/\r\n|\r|\n/);
+  const posts = [];
+  let currentDate = null;
+  let cur = null;
+  const flush = () => {
+    if(!cur) return;
+    const body = cur.bodyLines.join("\n").replace(/\s+$/g,"");
+    posts.push({ date: cur.date, time: cur.time, sender: cur.sender, body });
+  };
+  for(const line of lines){
+    const d = line.match(LINE_DATE_HEADER);
+    if(d){ flush(); cur=null; currentDate = `${d[1]}-${pad2(d[2])}-${pad2(d[3])}`; continue; }
+    const m = line.match(LINE_MESSAGE_START);
+    if(m){
+      flush();
+      const { sender, firstLine } = splitSenderAndBody(m[3]);
+      cur = { date: currentDate, time: `${pad2(m[1])}:${m[2]}`, sender, bodyLines:[firstLine] };
+      continue;
+    }
+    if(cur) cur.bodyLines.push(line);
+  }
+  flush();
+  return posts.filter(p => p.date !== null);
+}
+
+/* =========================================================================
+ *  判定（detector.js を移植）
+ * ====================================================================== */
+const NORMALIZED_INSTRUCTORS = new Set(INSTRUCTOR_NAMES.map(n => n.replace(/[\s　]/g,"")));
+function normalizeName(name){ return (name||"").replace(/[\s　]/g,""); }
+
+function firstNonEmptyLine(body){
+  for(const line of body.split("\n")){ if(line.trim().length>0) return line.trim(); }
+  return "";
+}
+function isSystemMessage(post){
+  const c = `${post.sender} ${post.body}`;
+  return SYSTEM_MESSAGE_PATTERNS.some(p => p.test(c));
+}
+function isBotMessage(post){
+  if(BOT_SENDER_NAMES.includes(post.sender)) return true;
+  return BOT_BODY_MARKERS.some(m => post.body.includes(m));
+}
+function isNonReportByFirstLine(post){
+  const head = firstNonEmptyLine(post.body);
+  if(!head) return false;
+  return NON_REPORT_FIRSTLINE_MARKERS.some(m => head.includes(m));
+}
+function cleanSenderName(sender){
+  if(!sender) return "";
+  const noMention = sender.replace(/^@/,"");
+  const before = noMention.split(/[（(]/)[0];
+  const cleaned = before.trim();
+  return cleaned.length>0 ? cleaned : noMention.trim();
+}
+function extractNameFromBody(body){
+  const m = body.match(STUDENT_NAME_PATTERN);
+  if(!m) return null;
+  const name = m[1].trim();
+  return name.length>0 ? name : null;
+}
+function isInstructorPost(post){
+  const s = normalizeName(cleanSenderName(post.sender));
+  if(s && NORMALIZED_INSTRUCTORS.has(s)) return true;
+  const b = normalizeName(extractNameFromBody(post.body));
+  return b.length>0 && NORMALIZED_INSTRUCTORS.has(b);
+}
+function hasReportTemplateMarker(body){
+  return REPORT_TEMPLATE_MARKERS.some(m => body.includes(m));
+}
+const REPLY_GREETING_PATTERN = /^.{0,16}さん.{0,8}(お疲れ様|おつかれ)/;
+const REPLY_NAME_ONLY_PATTERN = /^.{0,16}さん[\s　]*[！!、,。]*[\s　]*$/;
+function isPeerReply(post){
+  const head = firstNonEmptyLine(post.body);
+  if(!head) return false;
+  if(/📊|月報/.test(head)) return false;
+  return REPLY_GREETING_PATTERN.test(head) || REPLY_NAME_ONLY_PATTERN.test(head);
+}
+function resolveStudentName(post){
+  const fromBody = extractNameFromBody(post.body);
+  if(fromBody) return { name: fromBody, source:"body" };
+  if(post.sender && !NON_STUDENT_SENDER_NAMES.includes(post.sender)) return { name: cleanSenderName(post.sender), source:"sender" };
+  return { name: UNKNOWN_STUDENT_LABEL, source:"unknown" };
+}
+function classifyPost(post){
+  const base = { isReport:false, needsReview:false, studentName:"", reason:"" };
+  if(isSystemMessage(post)) return base;
+  if(isBotMessage(post)) return base;
+  if(isInstructorPost(post)) return base;
+  if(isNonReportByFirstLine(post)) return base;
+  if(isPeerReply(post)) return base;
+  if(!hasReportTemplateMarker(post.body)) return base;
+  const { name, source } = resolveStudentName(post);
+  return { isReport:true, needsReview: source==="unknown", studentName:name, reason:"月報" };
+}
+
+/* =========================================================================
+ *  サニタイズ（feedback.js を移植）
+ * ====================================================================== */
+const ALLOWED_EMOJI_SET = new Set(ALLOWED_EMOJI);
+const SEG = (typeof Intl!=="undefined" && Intl.Segmenter) ? new Intl.Segmenter("ja",{granularity:"grapheme"}) : null;
+function sanitizeFeedback(text){
+  let r = text;
+  for(const {from,to} of FEEDBACK_PHRASE_REPLACEMENTS) r = r.split(from).join(to);
+  let stripped = "";
+  if(SEG){
+    for(const {segment} of SEG.segment(r)){
+      const isPict = /\p{Extended_Pictographic}/u.test(segment);
+      if(isPict && !ALLOWED_EMOJI_SET.has(segment)) continue;
+      stripped += segment;
+    }
+  } else {
+    stripped = r.replace(/\p{Extended_Pictographic}/gu, ch => ALLOWED_EMOJI_SET.has(ch) ? ch : "");
+  }
+  return stripped.replace(/[ \t]+\n/g,"\n").replace(/[ \t]{2,}/g," ").replace(/\n{3,}/g,"\n\n").trim();
+}
+
+/* =========================================================================
+ *  OpenAI 呼び出し（ブラウザから直接・各自キー）＋ ローカルキャッシュ
+ * ====================================================================== */
+const CACHE_LS_KEY = "mfb_cache_" + PROMPT_VERSION;
+function loadCache(){ try{ return JSON.parse(localStorage.getItem(CACHE_LS_KEY) || "{}"); }catch(e){ return {}; } }
+function saveCache(c){ try{ localStorage.setItem(CACHE_LS_KEY, JSON.stringify(c)); }catch(e){} }
+async function sha256hex(str){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+async function callOpenAI(apiKey, body, name){
+  const payload = { model:OPENAI.model, temperature:OPENAI.temperature, max_tokens:OPENAI.maxTokens,
+    messages:[ {role:"system",content:FEEDBACK_SYSTEM_PROMPT}, {role:"user",content:buildUserMessage(body,name)} ] };
+  let lastErr = null;
+  for(let attempt=0; attempt<=OPENAI.maxRetries; attempt++){
+    try{
+      const res = await fetch(OPENAI.endpoint, { method:"POST",
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+apiKey },
+        body: JSON.stringify(payload) });
+      if(res.ok){
+        const data = await res.json();
+        const t = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+        if(!t) throw new Error("応答にフィードバックがありません");
+        return t.trim();
+      }
+      if(res.status===401) throw new Error("APIキーが正しくありません（401）");
+      if((res.status===429 || res.status>=500) && attempt<OPENAI.maxRetries){ await sleep(OPENAI.retryBaseMs*Math.pow(2,attempt)); continue; }
+      throw new Error("OpenAIエラー HTTP "+res.status);
+    }catch(e){ lastErr=e; if(attempt<OPENAI.maxRetries){ await sleep(OPENAI.retryBaseMs*Math.pow(2,attempt)); continue; } }
+  }
+  throw new Error(lastErr ? lastErr.message : "生成に失敗しました");
+}
+
+async function runPool(items, worker, concurrency, onProgress){
+  const results = new Array(items.length);
+  let idx = 0, done = 0;
+  async function next(){
+    const i = idx++;
+    if(i>=items.length) return;
+    results[i] = await worker(items[i], i);
+    done++; if(onProgress) onProgress(done, items.length);
+    return next();
+  }
+  const runners = [];
+  for(let c=0; c<Math.min(concurrency, items.length); c++) runners.push(next());
+  await Promise.all(runners);
+  return results;
+}
+
+/* =========================================================================
+ *  出力（output.js / main.js を移植）
+ * ====================================================================== */
+function formatDateTime(post){ return post.date.replace(/-/g,"/") + " " + post.time; }
+function escapeField(v, delim){
+  const t = (v===null||v===undefined) ? "" : String(v);
+  if(t.includes(delim)||t.includes('"')||t.includes("\n")||t.includes("\r")) return '"'+t.replace(/"/g,'""')+'"';
+  return t;
+}
+function buildTSV(rows){
+  const delim = "\t";
+  const header = OUTPUT_COLUMNS.map(c=>escapeField(c,delim)).join(delim);
+  const body = rows.map(r => r.map(f=>escapeField(f,delim)).join(delim));
+  return [header, ...body].join("\r\n");
+}
+
+function extractReports(rawText, startISO, endISO){
+  const posts = parseLineChat(rawText);
+  const period = posts.filter(p => p.date >= startISO && p.date <= endISO);
+  const reports = [];
+  for(const post of period){
+    const c = classifyPost(post);
+    if(c.isReport) reports.push({ post, studentName:c.studentName, needsReview:c.needsReview });
+  }
+  reports.sort((a,b)=>formatDateTime(a.post).localeCompare(formatDateTime(b.post)));
+  return { reports, totalPosts: posts.length, periodPosts: period.length };
+}
+function duplicateNameSet(reports){
+  const counts = new Map();
+  for(const r of reports){
+    if(r.studentName===UNKNOWN_STUDENT_LABEL) continue;
+    counts.set(r.studentName, (counts.get(r.studentName)||0)+1);
+  }
+  const dup = new Set();
+  for(const [n,c] of counts){ if(c>1) dup.add(n); }
+  return dup;
+}
+
+/* =========================================================================
+ *  UI
+ * ====================================================================== */
+const $ = id => document.getElementById(id);
+let fileText = null;
+let lastRows = null;
+
+// APIキー復元
+$("apikey").value = localStorage.getItem("mfb_apikey") || "";
+$("apikey").addEventListener("change", e => localStorage.setItem("mfb_apikey", e.target.value.trim()));
+
+// 対象月デフォルト（今月）
+(function(){ const d=new Date(); $("month").value = d.getFullYear()+"-"+pad2(d.getMonth()+1); })();
+
+// スプレッドシート連携設定の復元・保存（ブラウザ内のみ）
+$("sheeturl").value = localStorage.getItem("mfb_sheet_url") || "";
+$("sheettoken").value = localStorage.getItem("mfb_sheet_token") || "";
+$("sheeturl").addEventListener("change", e => localStorage.setItem("mfb_sheet_url", e.target.value.trim()));
+$("sheettoken").addEventListener("change", e => localStorage.setItem("mfb_sheet_token", e.target.value.trim()));
+
+// ファイル選択 / ドロップ
+const drop = $("drop");
+$("file").addEventListener("change", e => { if(e.target.files[0]) readFile(e.target.files[0]); });
+drop.addEventListener("click", ()=>$("file").click());
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev, e=>{ e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { const f=e.dataTransfer.files[0]; if(f) readFile(f); });
+function readFile(f){
+  const reader = new FileReader();
+  reader.onload = () => { fileText = reader.result; $("fileinfo").textContent = `選択：${f.name}（${Math.round(f.size/1024)}KB）`; };
+  reader.onerror = () => setMsg("ファイルの読み込みに失敗しました","err");
+  reader.readAsText(f, "UTF-8");
+}
+
+function setMsg(text, kind){ const el=$("message"); el.className = "msg "+(kind||""); el.textContent = text; }
+function setProgress(done, total){ $("barfill").style.width = (total?Math.round(done/total*100):0)+"%"; $("status").textContent = total?`生成中 ${done}/${total}`:""; }
+
+function monthRange(ym){
+  const [y,m] = ym.split("-").map(Number);
+  const start = `${y}-${pad2(m)}-01`;
+  const last = new Date(y, m, 0).getDate();
+  const end = `${y}-${pad2(m)}-${pad2(last)}`;
+  return { start, end };
+}
+
+$("clearcache").addEventListener("click", ()=>{ localStorage.removeItem(CACHE_LS_KEY); setMsg("キャッシュを消去しました（次回は全件を再生成します）","ok"); });
+
+$("run").addEventListener("click", run);
+async function run(){
+  const apiKey = $("apikey").value.trim();
+  if(!apiKey){ setMsg("STEP1：OpenAI APIキーを入力してください。","err"); return; }
+  if(!fileText){ setMsg("STEP2：LINEのトーク履歴ファイルを選んでください。","err"); return; }
+  if(!$("month").value){ setMsg("STEP3：対象月を選んでください。","err"); return; }
+  localStorage.setItem("mfb_apikey", apiKey);
+
+  $("run").disabled = true; setMsg("",""); setProgress(0,0);
+  try{
+    const { start, end } = monthRange($("month").value);
+    const { reports, totalPosts, periodPosts } = extractReports(fileText, start, end);
+    if(reports.length===0){ setMsg(`月報が見つかりませんでした（読込${totalPosts}投稿／期間内${periodPosts}）。対象月やファイルをご確認ください。`,"err"); $("run").disabled=false; return; }
+
+    const dup = duplicateNameSet(reports);
+    const cache = loadCache();
+    setProgress(0, reports.length);
+
+    const results = await runPool(reports, async (r)=>{
+      const key = await sha256hex(PROMPT_VERSION+"|"+r.studentName+"|"+r.post.body.trim());
+      let fb;
+      if(cache[key]){ fb = cache[key]; }
+      else { fb = sanitizeFeedback(await callOpenAI(apiKey, r.post.body, r.studentName)); cache[key]=fb; saveCache(cache); }
+      const base = r.needsReview ? REVIEW_STATUS.needsReview : REVIEW_STATUS.unchecked;
+      const status = dup.has(r.studentName) ? base+REVIEW_STATUS.duplicateSuffix : base;
+      return [ formatDateTime(r.post), r.studentName, r.post.body, fb, status, POST_NOT_POSTED ];
+    }, OPENAI.concurrency, setProgress);
+
+    saveCache(cache);
+    lastRows = results;
+    renderTable(results, dup);
+    setMsg(`完了：${reports.length}件の月報にフィードバックを生成しました（読込${totalPosts}投稿／期間内${periodPosts}）。`,"ok");
+  }catch(e){
+    setMsg("エラー："+e.message,"err");
+  }finally{
+    $("run").disabled = false;
+  }
+}
+
+function renderTable(rows, dup){
+  const thead = $("table").querySelector("thead");
+  const tbody = $("table").querySelector("tbody");
+  thead.innerHTML = "<tr>"+OUTPUT_COLUMNS.map(c=>`<th>${c}</th>`).join("")+"</tr>";
+  tbody.innerHTML = rows.map(r=>{
+    const nameCell = r[1] + (dup.has(r[1]) ? '<span class="badge">重複候補</span>' : '');
+    return "<tr>"+
+      `<td>${escapeHtml(r[0])}</td>`+
+      `<td>${nameCell}</td>`+
+      `<td class="body">${escapeHtml(r[2])}</td>`+
+      `<td class="fb">${escapeHtml(r[3])}</td>`+
+      `<td>${escapeHtml(r[4])}</td>`+
+      `<td>${escapeHtml(r[5])}</td>`+
+    "</tr>";
+  }).join("");
+  $("resultcount").textContent = `${rows.length}件`;
+  $("resultcard").style.display = "block";
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+$("copy").addEventListener("click", async ()=>{
+  if(!lastRows) return;
+  try{ await navigator.clipboard.writeText(buildTSV(lastRows)); setMsg("クリップボードにコピーしました。スプレッドシートに貼り付けてください。","ok"); }
+  catch(e){ setMsg("コピーに失敗しました。TSVダウンロードをお使いください。","err"); }
+});
+$("download").addEventListener("click", ()=>{
+  if(!lastRows) return;
+  const ym = $("month").value.replace("-","_");
+  const blob = new Blob(["﻿"+buildTSV(lastRows)], {type:"text/tab-separated-values;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `monthly_reports_${ym}.tsv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("pushsheet").addEventListener("click", async ()=>{
+  if(!lastRows){ setMsg("先に「フィードバックを作成」してください。","err"); return; }
+  const url = $("sheeturl").value.trim();
+  const token = $("sheettoken").value.trim();
+  if(!url){ setMsg("STEP4：GASウェブアプリURLを入力してください。","err"); return; }
+  localStorage.setItem("mfb_sheet_url", url);
+  localStorage.setItem("mfb_sheet_token", token);
+
+  const btn = $("pushsheet");
+  btn.disabled = true;
+  setMsg("スプレッドシートへ送信中…","");
+  try{
+    // GASウェブアプリはCORSプリフライトを避けるため text/plain で送信（本文はJSON文字列）。
+    // レスポンスは読めない場合があるため、送信成否のみを扱う（重複はGAS側で防止）。
+    const sheetName = ($("month").value || "").replace("-", ""); // 例: 2026-06 -> 202606
+    await fetch(url, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ token, sheetName, dryRun: false, records: lastRows }),
+    });
+    setMsg(`スプレッドシートへ送信しました（シート「${sheetName}」）。新規の月報だけが追記されます（既存行と手編集は保持・無ければ新規作成）。初回はシート側で反映をご確認ください。`,"ok");
+  }catch(e){
+    setMsg("送信に失敗しました。URL・ネットワークをご確認ください。","err");
+  }finally{
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
